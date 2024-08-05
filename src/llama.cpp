@@ -2718,7 +2718,6 @@ struct llama_model {
 struct llama_context {
     llama_context(const llama_model & model)
         : model(model)
-        , sampling(model.vocab, nullptr, nullptr) // by default, no grammar
         , t_start_us(model.t_start_us)
         , t_load_us(model.t_load_us) {}
 
@@ -2735,7 +2734,6 @@ struct llama_context {
     const struct llama_model & model;
 
     struct llama_cparams        cparams;
-    struct llama_sampling       sampling;
     struct llama_kv_cache       kv_self;
     struct llama_control_vector cvec;
 
@@ -16850,7 +16848,6 @@ struct llama_model_params llama_model_default_params() {
 
 struct llama_context_params llama_context_default_params() {
     struct llama_context_params result = {
-        /*.seed                        =*/ LLAMA_DEFAULT_SEED,
         /*.n_ctx                       =*/ 512,
         /*.n_batch                     =*/ 2048,
         /*.n_ubatch                    =*/ 512,
@@ -17129,10 +17126,6 @@ struct llama_context * llama_new_context_with_model(
         cparams.causal_attn = params.attention_type == LLAMA_ATTENTION_TYPE_CAUSAL;
     }
 
-    if (params.seed == LLAMA_DEFAULT_SEED) {
-        params.seed = time(NULL);
-    }
-
     LLAMA_LOG_INFO("%s: n_ctx      = %u\n",     __func__, cparams.n_ctx);
     LLAMA_LOG_INFO("%s: n_batch    = %u\n",     __func__, cparams.n_batch);
     LLAMA_LOG_INFO("%s: n_ubatch   = %u\n",     __func__, cparams.n_ubatch);
@@ -17142,8 +17135,6 @@ struct llama_context * llama_new_context_with_model(
 
     ctx->abort_callback      = params.abort_callback;
     ctx->abort_callback_data = params.abort_callback_data;
-
-    llama_sampling_set_rng_seed_impl(ctx->sampling, params.seed);
 
     ctx->logits_all = params.logits_all;
 
@@ -17462,10 +17453,6 @@ int32_t llama_n_layer(const struct llama_model * model) {
 
 const struct llama_model * llama_get_model(const struct llama_context * ctx) {
     return &ctx->model;
-}
-
-struct llama_sampling * llama_get_sampling(struct llama_context * ctx) {
-    return &ctx->sampling;
 }
 
 enum llama_pooling_type llama_pooling_type(const struct llama_context * ctx) {
@@ -17942,14 +17929,14 @@ struct llama_data_write {
         // TODO: add more model-specific info which should prevent loading the session file if not identical
     }
 
-    void write_rng(const std::mt19937 & rng) {
-        std::ostringstream rng_ss;
-        rng_ss << rng;
+    //void write_rng(const std::mt19937 & rng) {
+    //    std::ostringstream rng_ss;
+    //    rng_ss << rng;
 
-        const std::string & rng_str = rng_ss.str();
+    //    const std::string & rng_str = rng_ss.str();
 
-        write_string(rng_str);
-    }
+    //    write_string(rng_str);
+    //}
 
     void write_output_ids(const struct llama_context * ctx) {
         const uint32_t n_outputs = ctx->n_outputs;
@@ -18167,17 +18154,17 @@ struct llama_data_read {
         // TODO: add more info which needs to be identical but which is not verified otherwise
     }
 
-    void read_rng(std::mt19937 & rng) {
-        std::string rng_str;
-        read_string(rng_str);
+    //void read_rng(std::mt19937 & rng) {
+    //    std::string rng_str;
+    //    read_string(rng_str);
 
-        std::istringstream rng_ss(rng_str);
-        rng_ss >> rng;
+    //    std::istringstream rng_ss(rng_str);
+    //    rng_ss >> rng;
 
-        if (rng_ss.fail()) {
-            throw std::runtime_error("failed to load RNG state");
-        }
-    }
+    //    if (rng_ss.fail()) {
+    //        throw std::runtime_error("failed to load RNG state");
+    //    }
+    //}
 
     void read_output_ids(struct llama_context * ctx) {
         std::vector<int32_t> output_pos;
@@ -18591,8 +18578,6 @@ static size_t llama_state_get_data_internal(struct llama_context * ctx, llama_da
 
     data_ctx.write_model_info(ctx);
 
-    data_ctx.write_rng(ctx->sampling.rng);
-
     // copy outputs
     data_ctx.write_output_ids(ctx);
     data_ctx.write_logits(ctx);
@@ -18629,9 +18614,6 @@ static size_t llama_state_set_data_internal(struct llama_context * ctx, llama_da
     llama_synchronize(ctx);
 
     data_ctx.read_model_info(ctx);
-
-    // set rng
-    data_ctx.read_rng(ctx->sampling.rng);
 
     // set outputs
     data_ctx.read_output_ids(ctx);
@@ -19687,12 +19669,12 @@ void llama_print_timings(struct llama_context * ctx, struct llama_sampling * smp
         /*.t_start_ms    =*/ 1e-3 * ctx->t_start_us,
         /*.t_end_ms      =*/ 1.00 * ggml_time_ms(),
         /*.t_load_ms     =*/ 1e-3 * ctx->t_load_us,
-        /*.t_sampling_ms =*/ 1e-3 * (smpl ? smpl->t_total_us : ctx->sampling.t_total_us),
+        /*.t_sampling_ms =*/ 1e-3 * (smpl ? smpl->t_total_us : 0.0),
         /*.t_grammar_ms  =*/ 1e-3 * (smpl && smpl->grammar ? smpl->grammar->t_total_us : 0.0),
         /*.t_p_eval_ms   =*/ 1e-3 * ctx->t_p_eval_us,
         /*.t_eval_ms     =*/ 1e-3 * ctx->t_eval_us,
 
-        /*.n_sampling       =*/ std::max(0, smpl ? smpl->n_sample : ctx->sampling.n_sample),
+        /*.n_sampling       =*/ std::max(0, smpl ? smpl->n_sample : 0),
         /*.n_grammar_sample =*/ std::max(0, smpl && smpl->grammar ? smpl->grammar->n_sample : 0),
         /*.n_grammar_accept =*/ std::max(0, smpl && smpl->grammar ? smpl->grammar->n_accept : 0),
         /*.n_p_eval         =*/ std::max(0, ctx->n_p_eval),
